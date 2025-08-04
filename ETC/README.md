@@ -21,3 +21,52 @@
   INSERT, UPDATE 쿼리에 대해서 이 조건식을 계산해 true면 작업을 진행하고, false나 null이면 오류로 처리함.
 
 - [Postgresql 공식 문서](https://postgresql.kr/docs/12/sql-createpolicy.html)
+----------------------------------------------------------------------------
+### Supabase에서 RLS설정된 테이블 API 조회시 고려할 점
+- 상황: 테이블 조회하는 API 연동 후 호출했을 때 오류는 안 나는데, 데이터가 있는데도 불구하고 빈 배열로 조회됨
+- 원인: RLS때문에 로그인 유저만 조회 가능하도록 설정되서, API 호출시 로그인 정보를 전달해줘야하는데 유저 정보가 빠져있었음
+- 해결방법: supabase 호출 시 유저 정보 (access token) 포함되게 해야하고, 서버 API 요청시  session 기준으로 처리
+
+  - src/app/api/shelf/route.ts
+
+  AS-IS
+  ```
+  export async function GET() {
+  const { data, error } = await supabase.from("shelf").select("*");
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  return NextResponse.json(data);
+  }
+  ```
+
+  TO-BE
+  ```
+  export async function GET() {
+  const supabase = createRouteHandlerClient({ cookies });
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { data, error } = await supabase
+    .from("shelf")
+    .select("*")
+    .eq("owner_id", session.user.id); // 현재 로그인한 유저 기준 필터
+
+    ...
+  ```
+   - page에서 API 호출할 때 credentials 포함해서 보내기
+     ```
+     const res = await fetch("/api/shelf", {
+          method: "GET",
+          credentials: "include", // 세션 쿠키 포함해서 보냄
+        });
+     ```
+  자세한 코드는 [PR내용](https://github.com/solbi0802/clip-n-keep/pull/46) 참조 
+
+
